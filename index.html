@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>양자내성암호(Lattice) 시뮬레이터</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+        body { font-family: 'Inter', sans-serif; }
+        /* 터미널 스크롤바 커스텀 */
+        #terminal-output::-webkit-scrollbar { width: 6px; }
+        #terminal-output::-webkit-scrollbar-track { background: #1f2937; }
+        #terminal-output::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 4px; }
+    </style>
+</head>
+<body class="bg-slate-50 h-screen p-4 flex flex-col md:flex-row gap-4 overflow-hidden">
+
+    <!-- 왼쪽 컨트롤 패널 -->
+    <div id="left-panel" class="w-full md:w-[420px] flex flex-col bg-white rounded-xl shadow-lg border border-slate-200 overflow-hidden flex-shrink-0">
+        <!-- 헤더 -->
+        <div class="bg-slate-800 text-white p-5 pb-5 flex-shrink-0">
+            <h1 class="text-xl font-bold mb-1.5 flex items-center gap-2">
+                <svg class="w-5 h-5 text-blue-400" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clip-rule="evenodd"></path></svg>
+                격자 암호 시뮬레이터
+            </h1>
+            <p class="text-xs text-slate-300 leading-relaxed">
+                기준 벡터의 사잇각(θ)과 오차 방향에 따른 '2단계 복원' 및 '계수 증폭' 현상을 확인해보세요.
+            </p>
+        </div>
+
+        <div class="p-5 flex flex-col flex-grow overflow-y-auto">
+            <!-- 키 정보 -->
+            <div class="grid grid-cols-2 gap-3 mb-4 flex-shrink-0">
+                <div class="bg-green-50 border border-green-200 p-3 rounded-lg">
+                    <div class="font-bold text-green-700 text-xs mb-1">개인키 B (수신자용 · 92.7°)</div>
+                    <div class="text-xs font-mono text-slate-700">v₁ = (5, 1)<br>v₂ = (-1, 4)</div>
+                </div>
+                <div class="bg-red-50 border border-red-200 p-3 rounded-lg">
+                    <div class="font-bold text-red-700 text-xs mb-1">공개키 W (전체 공개 · 3.1°)</div>
+                    <div class="text-xs font-mono text-slate-700">w₁ = (10, 23)<br>w₂ = (7, 14)</div>
+                </div>
+            </div>
+
+            <!-- 사용자 입력 -->
+            <div class="mb-4 space-y-3 border-b border-slate-100 pb-4 flex-shrink-0">
+                <div>
+                    <label class="text-xs font-bold text-slate-600 block mb-1">1. 전송할 비밀 메시지 계수 (m, n)</label>
+                    <div class="flex gap-2">
+                        <input type="number" id="input-m" value="2" class="border border-slate-300 px-3 py-1.5 w-full rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <input type="number" id="input-n" value="-1" class="border border-slate-300 px-3 py-1.5 w-full rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                </div>
+                <div>
+                    <label class="text-xs font-bold text-slate-600 block mb-1">2. 숨기기용 오차 벡터 (ex, ey)</label>
+                    <div class="flex gap-2">
+                        <input type="number" id="input-ex" value="1" step="0.1" class="border border-slate-300 px-3 py-1.5 w-full rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <input type="number" id="input-ey" value="1" step="0.1" class="border border-slate-300 px-3 py-1.5 w-full rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                </div>
+            </div>
+
+            <!-- 시뮬레이션 버튼 -->
+            <div class="flex flex-col gap-2 mb-3 flex-shrink-0">
+                <button id="btn-encrypt" class="bg-blue-600 text-white py-2.5 rounded-lg font-bold text-sm hover:bg-blue-700 shadow-sm transition">🔒 1. 암호문 전송 (송신자)</button>
+                <div class="flex gap-2 mt-1">
+                    <button id="btn-receiver" class="flex-1 bg-green-600 text-white py-2.5 rounded-lg font-bold text-sm hover:bg-green-700 shadow-sm transition disabled:opacity-50 disabled:cursor-not-allowed" disabled>✅ 2. 수신자 해독</button>
+                    <button id="btn-hacker" class="flex-1 bg-red-600 text-white py-2.5 rounded-lg font-bold text-sm hover:bg-red-700 shadow-sm transition disabled:opacity-50 disabled:cursor-not-allowed" disabled>😈 3. 해커 해독</button>
+                </div>
+                <button id="btn-reset" class="bg-slate-100 text-slate-600 py-1.5 mt-1 rounded-lg font-bold text-xs hover:bg-slate-200 transition">↺ 초기화</button>
+            </div>
+
+            <!-- 드래그 크기 조절 핸들 -->
+            <div id="terminal-resizer" title="위아래로 드래그하여 출력창 크기를 조절하세요" class="flex items-center justify-center py-1.5 cursor-ns-resize select-none group flex-shrink-0">
+                <div class="w-12 h-1.5 bg-slate-300 group-hover:bg-blue-500 rounded-full transition-colors"></div>
+            </div>
+
+            <!-- 터미널 출력 (크기 조절 가능) -->
+            <div id="terminal-output" style="height: 200px; min-height: 90px; max-height: 550px;" class="bg-slate-900 rounded-lg p-3 overflow-y-auto resize-y text-xs font-mono flex flex-col gap-1.5 shadow-inner flex-shrink-0">
+                <div class="text-blue-300">> 시스템이 초기화되었습니다. 암호문을 전송해보세요.</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 오른쪽 캔버스 패널 -->
+    <div class="flex-grow bg-white rounded-xl shadow-lg border border-slate-200 relative overflow-hidden flex flex-col">
+        <div class="absolute top-4 left-4 bg-white/90 backdrop-blur px-3 py-2 rounded-md shadow-sm border border-slate-200 text-xs font-semibold z-10 space-y-1">
+            <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-blue-500 inline-block"></span> P (원본 격자점)</div>
+            <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full bg-orange-500 inline-block"></span> C (오차가 추가된 암호문)</div>
+        </div>
+        <canvas id="sim-canvas" class="w-full h-full cursor-crosshair"></canvas>
+    </div>
+
+    <script>
+        // --- 상태 변수 선언 ---
+        let simState = 'INIT'; // INIT, ENCRYPTED, RECEIVER, HACKER
+        
+        // 확정된 벡터 데이터 (수정사항 4 반영)
+        const v1 = [5, 1], v2 = [-1, 4];     // 개인키 (사잇각 약 92.7°)
+        const w1 = [10, 23], w2 = [7, 14];   // 공개키 (사잇각 약 3.1°)
+        
+        let m = 2, n = -1;
+        let ex = 1, ey = 1;
+        let P = [0, 0];
+        let C = [0, 0];
+        
+        // 복호화 결과
+        let P_rec = [0, 0], P_hack = [0, 0];
+        let recCoeffs = [0, 0], hackCoeffs = [0, 0];
+        let recSuccess = false, hackSuccess = false;
+
+        // --- DOM 엘리먼트 ---
+        const btnEncrypt = document.getElementById('btn-encrypt');
+        const btnReceiver = document.getElementById('btn-receiver');
+        const btnHacker = document.getElementById('btn-hacker');
+        const btnReset = document.getElementById('btn-reset');
+        const terminal = document.getElementById('terminal-output');
+        const resizer = document.getElementById('terminal-resizer');
+        const canvas = document.getElementById('sim-canvas');
+        const ctx = canvas.getContext('2d');
+
+        // --- 터미널 출력창 드래그 크기 조절 기능 (수정사항 3 반영) ---
+        let isResizing = false;
+        let startY = 0;
+        let startHeight = 0;
+
+        resizer.addEventListener('mousedown', (e) => {
+            isResizing = true;
+            startY = e.clientY;
+            startHeight = terminal.offsetHeight;
+            document.body.style.cursor = 'ns-resize';
+            e.preventDefault();
+        });
+
+        window.addEventListener('mousemove', (e) => {
+            if (!isResizing) return;
+            // 위로 드래그(startY - e.clientY > 0)하면 출력창 높이 증가
+            const deltaY = startY - e.clientY;
+            const newHeight = Math.min(Math.max(startHeight + deltaY, 90), 550);
+            terminal.style.height = `${newHeight}px`;
+        });
+
+        window.addEventListener('mouseup', () => {
+            if (isResizing) {
+                isResizing = false;
+                document.body.style.cursor = 'default';
+            }
+        });
+
+        // --- 터미널 로깅 함수 ---
+        function log(msg, type='info') {
+            const div = document.createElement('div');
+            if (type === 'error') div.className = 'text-red-400';
+            else if (type === 'success') div.className = 'text-green-400 font-bold';
+            else if (type === 'warning') div.className = 'text-yellow-300';
+            else if (type === 'header') div.className = 'text-blue-300 font-bold mt-1 border-t border-slate-700 pt-1';
+            else div.className = 'text-slate-300';
+            
+            div.innerHTML = `> ${msg}`;
+            terminal.appendChild(div);
+            terminal.scrollTop = terminal.scrollHeight;
+        }
+
+        // --- 수학 유틸리티 ---
+        // 2x2 연립일차방정식 풀이 (b1 * a + b2 * b = target)
+        function solveSystem(b1, b2, target) {
+            const det = b1[0] * b2[1] - b1[1] * b2[0];
+            if (det === 0) return [0, 0];
+            const x = (target[0] * b2[1] - target[1] * b2[0]) / det;
+            const y = (b1[0] * target[1] - b1[1] * target[0]) / det;
+            return [x, y];
+        }
+
+        // 두 벡터의 사잇각(도 단위) 계산
+        function getAngleDeg(b1, b2) {
+            const dot = b1[0] * b2[0] + b1[1] * b2[1];
+            const mag1 = Math.hypot(b1[0], b1[1]);
+            const mag2 = Math.hypot(b2[0], b2[1]);
+            const cosTheta = Math.min(Math.max(dot / (mag1 * mag2), -1), 1);
+            return (Math.acos(cosTheta) * 180 / Math.PI).toFixed(1);
+        }
+
+        // --- 캔버스 렌더링 시스템 ---
+        let width, height;
+        let minX = -5, maxX = 30, minY = -5, maxY = 20;
+
+        function resizeCanvas() {
+            width = canvas.width = canvas.clientWidth;
+            height = canvas.height = canvas.clientHeight;
+            render();
+        }
+        window.addEventListener('resize', resizeCanvas);
+
+        function mapX(x) {
+            const padding = 50;
+            return padding + (x - minX) * (width - 2 * padding) / (maxX - minX);
+        }
+        function mapY(y) {
+            const padding = 50;
+            return height - padding - (y - minY) * (height - 2 * padding) / (maxY - minY);
+        }
+
+        function calculateBounds() {
+            let pts = [[0,0], v1, v2, w1, w2];
+            if (simState !== 'INIT') {
+                pts.push(P, C);
+            }
+            if (simState === 'RECEIVER') pts.push(P_rec);
+            if (simState === 'HACKER') pts.push(P_hack);
+
+            let mx = Math.min(...pts.map(p => p[0])) - 3;
+            let Mx = Math.max(...pts.map(p => p[0])) + 3;
+            let my = Math.min(...pts.map(p => p[1])) - 3;
+            let My = Math.max(...pts.map(p => p[1])) + 3;
+
+            const dataRatio = (Mx - mx) / (My - my);
+            const canvasRatio = width / height;
+
+            if (dataRatio > canvasRatio) {
+                const newYRange = (Mx - mx) / canvasRatio;
+                const yCenter = (My + my) / 2;
+                my = yCenter - newYRange / 2;
+                My = yCenter + newYRange / 2;
+            } else {
+                const newXRange = (My - my) * canvasRatio;
+                const xCenter = (Mx + mx) / 2;
+                mx = xCenter - newXRange / 2;
+                Mx = xCenter + newXRange / 2;
+            }
+            
+            minX = mx; maxX = Mx;
+            minY = my; maxY = My;
+        }
+
+        function drawLine(x1, y1, x2, y2, color, lw=1, dash=[]) {
+            ctx.beginPath();
+            ctx.moveTo(mapX(x1), mapY(y1));
+            ctx.lineTo(mapX(x2), mapY(y2));
+            ctx.strokeStyle = color;
+            ctx.lineWidth = lw;
+            ctx.setLineDash(dash);
+            ctx.stroke();
+            ctx.setLineDash([]);
+        }
+
+        function drawArrow(x1, y1, x2, y2, color, lw=2) {
+            const headlen = 8;
+            const cx1 = mapX(x1), cy1 = mapY(y1);
+            const cx2 = mapX(x2), cy2 = mapY(y2);
+            const angle = Math.atan2(cy2 - cy1, cx2 - cx1);
+            
+            ctx.beginPath();
+            ctx.moveTo(cx1, cy1);
+            ctx.lineTo(cx2, cy2);
+            ctx.strokeStyle = color;
+            ctx.lineWidth = lw;
+            ctx.stroke();
+            
+            ctx.beginPath();
+            ctx.moveTo(cx2, cy2);
+            ctx.lineTo(cx2 - headlen * Math.cos(angle - Math.PI / 6), cy2 - headlen * Math.sin(angle - Math.PI / 6));
+            ctx.lineTo(cx2 - headlen * Math.cos(angle + Math.PI / 6), cy2 - headlen * Math.sin(angle + Math.PI / 6));
+            ctx.lineTo(cx2, cy2);
+            ctx.fillStyle = color;
+            ctx.fill();
+        }
+
+        function drawPoint(x, y, color, radius=5) {
+            ctx.beginPath();
+            ctx.arc(mapX(x), mapY(y), radius, 0, 2 * Math.PI);
+            ctx.fillStyle = color;
+            ctx.fill();
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+        }
+
+        function drawText(text, x, y, color, offsetX=10, offsetY=-10) {
+            ctx.fillStyle = color;
+            ctx.font = "bold 13px 'Inter', sans-serif";
+            ctx.strokeStyle = 'white';
+            ctx.lineWidth = 3;
+            ctx.strokeText(text, mapX(x) + offsetX, mapY(y) + offsetY);
+            ctx.fillText(text, mapX(x) + offsetX, mapY(y) + offsetY);
+        }
+
+        function drawLocalGrid(b1, b2, centerCoeffs, color) {
+            const [cx, cy] = centerCoeffs;
+            const fx = Math.floor(cx) - 2, Cx = Math.ceil(cx) + 2;
+            const fy = Math.floor(cy) - 2, Cy = Math.ceil(cy) + 2;
+
+            for(let i = fx; i <= Cx; i++) {
+                let p1x = i*b1[0] + fy*b2[0], p1y = i*b1[1] + fy*b2[1];
+                let p2x = i*b1[0] + Cy*b2[0], p2y = i*b1[1] + Cy*b2[1];
+                drawLine(p1x, p1y, p2x, p2y, color, 1, [4, 4]);
+            }
+            for(let j = fy; j <= Cy; j++) {
+                let p1x = fx*b1[0] + j*b2[0], p1y = fx*b1[1] + j*b2[1];
+                let p2x = Cx*b1[0] + j*b2[0], p2y = Cx*b1[1] + j*b2[1];
+                drawLine(p1x, p1y, p2x, p2y, color, 1, [4, 4]);
+            }
+        }
+
+        function render() {
+            calculateBounds();
+            ctx.clearRect(0, 0, width, height);
+
+            // 1. 좌표축 그리기
+            if (minX <= 0 && maxX >= 0) drawLine(0, minY, 0, maxY, '#cbd5e1', 1.5);
+            if (minY <= 0 && maxY >= 0) drawLine(minX, 0, maxX, 0, '#cbd5e1', 1.5);
+
+            // 2. 기준 벡터 그리기
+            drawArrow(0, 0, w1[0], w1[1], 'rgba(239, 68, 68, 0.45)');
+            drawArrow(0, 0, w2[0], w2[1], 'rgba(239, 68, 68, 0.45)');
+            drawArrow(0, 0, v1[0], v1[1], 'rgba(34, 197, 94, 0.7)');
+            drawArrow(0, 0, v2[0], v2[1], 'rgba(34, 197, 94, 0.7)');
+            drawText('v₁', v1[0], v1[1], '#15803d', 8, 12);
+            drawText('v₂', v2[0], v2[1], '#15803d', -22, -6);
+            drawText('w₁', w1[0], w1[1], '#b91c1c', 8, -6);
+            drawText('w₂', w2[0], w2[1], '#b91c1c', -24, -6);
+
+            // 3. 암호화 점 그리기
+            if (simState !== 'INIT') {
+                drawLine(P[0], P[1], C[0], C[1], '#f97316', 2, [3, 3]);
+                drawPoint(P[0], P[1], '#3b82f6', 6);
+                drawPoint(C[0], C[1], '#f97316', 6);
+                
+                drawText(`P(${P[0]}, ${P[1]})`, P[0], P[1], '#2563eb', -45, -14);
+                drawText(`C(${Number(C[0].toFixed(2))}, ${Number(C[1].toFixed(2))})`, C[0], C[1], '#c2410c', 10, 16);
+            }
+
+            // 4. 수신자 해독 시각화
+            if (simState === 'RECEIVER') {
+                drawLocalGrid(v1, v2, recCoeffs, 'rgba(34, 197, 94, 0.45)');
+                const color = recSuccess ? '#16a34a' : '#dc2626';
+                drawLine(C[0], C[1], P_rec[0], P_rec[1], color, 2);
+                drawPoint(P_rec[0], P_rec[1], color, 7);
+                
+                ctx.beginPath();
+                ctx.arc(mapX(P_rec[0]), mapY(P_rec[1]), 12, 0, 2 * Math.PI);
+                ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.stroke();
+
+                if (!recSuccess) {
+                    drawText(`P_오답(${P_rec[0]}, ${P_rec[1]})`, P_rec[0], P_rec[1], '#991b1b', 12, -10);
+                }
+            }
+
+            // 5. 해커 해독 시각화
+            if (simState === 'HACKER') {
+                drawLocalGrid(w1, w2, hackCoeffs, 'rgba(239, 68, 68, 0.45)');
+                const color = hackSuccess ? '#eab308' : '#dc2626';
+                drawLine(C[0], C[1], P_hack[0], P_hack[1], color, 2);
+                drawPoint(P_hack[0], P_hack[1], color, 7);
+
+                if (hackSuccess) {
+                    ctx.beginPath();
+                    ctx.arc(mapX(P_hack[0]), mapY(P_hack[1]), 12, 0, 2 * Math.PI);
+                    ctx.strokeStyle = '#eab308'; ctx.lineWidth = 2; ctx.stroke();
+                    drawText(`해커 탈취 성공! P(${P_hack[0]}, ${P_hack[1]})`, P_hack[0], P_hack[1], '#b45309', 12, 26);
+                } else {
+                    drawText(`P_오답(${P_hack[0]}, ${P_hack[1]})`, P_hack[0], P_hack[1], '#991b1b', 12, -10);
+                }
+            }
+        }
+
+        // --- 이벤트 리스너 ---
+        btnEncrypt.addEventListener('click', () => {
+            const rawM = parseInt(document.getElementById('input-m').value, 10);
+            const rawN = parseInt(document.getElementById('input-n').value, 10);
+            const rawEx = parseFloat(document.getElementById('input-ex').value);
+            const rawEy = parseFloat(document.getElementById('input-ey').value);
+
+            m = Number.isNaN(rawM) ? 0 : rawM;
+            n = Number.isNaN(rawN) ? 0 : rawN;
+            ex = Number.isNaN(rawEx) ? 0 : rawEx;
+            ey = Number.isNaN(rawEy) ? 0 : rawEy;
+
+            // 공개키로 격자점 P 생성 후 오차 벡터 e 추가
+            P = [m * w1[0] + n * w2[0], m * w1[1] + n * w2[1]];
+            C = [P[0] + ex, P[1] + ey];
+
+            simState = 'ENCRYPTED';
+            btnReceiver.disabled = false;
+            btnHacker.disabled = false;
+
+            terminal.innerHTML = '';
+            log(`[암호화 전송] 원본 비밀 메시지: (m, n) = (${m}, ${n})`, 'header');
+            log(`1. 공개키 격자점 이동: P = ${m}w₁ + ${n}w₂ = (${P[0]}, ${P[1]})`);
+            log(`2. 오차 벡터 e(${ex}, ${ey}) 추가 → 암호문 C(${Number(C[0].toFixed(2))}, ${Number(C[1].toFixed(2))}) 전송 완료!`, 'warning');
+            
+            render();
+        });
+
+        // 수신자 2단계 복원법 구현 (수정사항 1, 2 반영)
+        btnReceiver.addEventListener('click', () => {
+            const angleV = getAngleDeg(v1, v2);
+            
+            // 1단계: 개인키(v1, v2)로 C를 분해하여 반올림 -> 격자점 P_rec 복원
+            recCoeffs = solveSystem(v1, v2, C);
+            const alpha = recCoeffs[0], beta = recCoeffs[1];
+            const rAlpha = Math.round(alpha), rBeta = Math.round(beta);
+            
+            P_rec = [rAlpha * v1[0] + rBeta * v2[0], rAlpha * v1[1] + rBeta * v2[1]];
+
+            // 2단계: 복원된 점 P_rec를 공개키(w1, w2)로 분해 -> 비밀 메시지 (m_rec, n_rec) 역산
+            const [mRecRaw, nRecRaw] = solveSystem(w1, w2, P_rec);
+            const mRec = Math.round(mRecRaw);
+            const nRec = Math.round(nRecRaw);
+
+            // 실제 원본 메시지 (m, n) 및 원본 점 P와 비교 판정
+            recSuccess = (mRec === m && nRec === n && P_rec[0] === P[0] && P_rec[1] === P[1]);
+            simState = 'RECEIVER';
+            
+            log(`[수신자 2단계 복원 시도] (개인키 사잇각: ${angleV}°)`, 'header');
+            log(`1단계(점 복원): C = ${alpha.toFixed(2)}v₁ + ${beta.toFixed(2)}v₂ → 반올림 (${rAlpha}, ${rBeta}) → 복원점 P'(${P_rec[0]}, ${P_rec[1]})`);
+            log(`2단계(메시지 역산): P' = ${mRec}w₁ + ${nRec}w₂ → 해독된 메시지: (${mRec}, ${nRec})`);
+            
+            if (recSuccess) {
+                log(`▶ 판정: 원본 메시지 (${m}, ${n})와 일치! 수신자 해독 성공! 🔓`, 'success');
+            } else {
+                log(`▶ 판정: 원본 메시지 (${m}, ${n})와 불일치! 오차가 개인키 복원 영역을 벗어나 수신자도 해독 실패! ❌`, 'error');
+            }
+            render();
+        });
+
+        // 해커 공개키 해독 시도 및 실제 비교 판정 (수정사항 1 반영)
+        btnHacker.addEventListener('click', () => {
+            const angleW = getAngleDeg(w1, w2);
+
+            // 해커는 공개키(w1, w2)로 C를 분해하여 반올림 -> 바로 메시지 계수 (rx, ry)로 추정
+            hackCoeffs = solveSystem(w1, w2, C);
+            const x = hackCoeffs[0], y = hackCoeffs[1];
+            const rx = Math.round(x), ry = Math.round(y);
+            
+            P_hack = [rx * w1[0] + ry * w2[0], rx * w1[1] + ry * w2[1]];
+
+            // 실제 원본 메시지 (m, n)과 비교 판정
+            hackSuccess = (rx === m && ry === n && P_hack[0] === P[0] && P_hack[1] === P[1]);
+            simState = 'HACKER';
+
+            log(`[해커 공개키 해독 시도] (공개키 사잇각: ${angleW}°)`, 'header');
+            log(`1. 공개키 성분 분해: C = ${x.toFixed(2)}w₁ + ${y.toFixed(2)}w₂`);
+            log(`2. 계수 반올림 추정: (${rx}, ${ry}) → 도달 좌표 P_hack(${P_hack[0]}, ${P_hack[1]})`);
+
+            if (hackSuccess) {
+                log(`▶ 판정: 주의! 오차가 공개키 복원 영역(E_공개) 안에 들어와 해커도 원본 (${m}, ${n}) 해독에 성공했습니다! ⚠️`, 'warning');
+            } else {
+                log(`▶ 판정: 좁은 사잇각(${angleW}°)으로 계수 오차가 증폭되어 원본 (${m}, ${n})과 불일치! 해커 해독 실패! 🛡️`, 'error');
+            }
+            render();
+        });
+
+        btnReset.addEventListener('click', () => {
+            simState = 'INIT';
+            recSuccess = false;
+            hackSuccess = false;
+            btnReceiver.disabled = true;
+            btnHacker.disabled = true;
+            terminal.innerHTML = `<div class="text-blue-300">> 초기화 완료. 새로운 값을 입력해보세요.</div>`;
+            render();
+        });
+
+        // 초기화 및 첫 렌더링
+        setTimeout(resizeCanvas, 100);
+    </script>
+</body>
+</html>
